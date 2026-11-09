@@ -32,6 +32,11 @@ NEGATION_WORDS = {
     "won't",
 }
 
+# Emoji signals added after breaker tests. Posts whose only cue was an emoji
+# scored 0 and came back neutral. Skull and other ambiguous marks are left out.
+POSITIVE_EMOJI = {":)", ":-)", ":d", ";)", "😂"}
+NEGATIVE_EMOJI = {":(", ":-(", "😭"}
+
 # Simple tokens: emoticons, words (keep apostrophes), then one leftover symbol
 # such as an emoji. Punctuation below is dropped so "tired," still matches.
 _TOKEN_RE = re.compile(r":-?\)|:-?\(|:d|;\)|[a-z0-9]+(?:'[a-z]+)?|[^\s\w]", re.IGNORECASE)
@@ -94,7 +99,8 @@ class MoodAnalyzer:
 
         Enhancement: a negation word flips the next mood word.
         "not happy" subtracts a point. "not bad" adds a point.
-        Each matching word is counted every time it appears.
+        A short list of emojis also adds or subtracts one point.
+        Each match is counted every time it appears.
         """
         tokens = self.preprocess(text)
         score = 0
@@ -118,10 +124,10 @@ class MoodAnalyzer:
                     i += 2
                     continue
 
-            if token in self.positive_words:
+            if token in self.positive_words or token in POSITIVE_EMOJI:
                 score += 1
                 positive_hits.append(token)
-            elif token in self.negative_words:
+            elif token in self.negative_words or token in NEGATIVE_EMOJI:
                 score -= 1
                 negative_hits.append(token)
             i += 1
