@@ -9,9 +9,38 @@ This class starts with very simple logic:
   - Convert that score into a mood label
 """
 
+import re
 from typing import List, Dict, Tuple, Optional
 
 from dataset import POSITIVE_WORDS, NEGATIVE_WORDS
+
+# Words that flip the next mood word. "not happy" should count as negative,
+# and "not bad" should count as positive.
+NEGATION_WORDS = {
+    "not",
+    "no",
+    "never",
+    "dont",
+    "don't",
+    "isnt",
+    "isn't",
+    "wasnt",
+    "wasn't",
+    "cant",
+    "can't",
+    "wont",
+    "won't",
+}
+
+# Emoji signals added after breaker tests. Posts whose only cue was an emoji
+# scored 0 and came back neutral. Skull and other ambiguous marks are left out.
+POSITIVE_EMOJI = {":)", ":-)", ":d", ";)", "😂"}
+NEGATIVE_EMOJI = {":(", ":-(", "😭"}
+
+# Simple tokens: emoticons, words (keep apostrophes), then one leftover symbol
+# such as an emoji. Punctuation below is dropped so "tired," still matches.
+_TOKEN_RE = re.compile(r":-?\)|:-?\(|:d|;\)|[a-z0-9]+(?:'[a-z]+)?|[^\s\w]", re.IGNORECASE)
+_SKIP_TOKENS = set(".,!?;:\"'()[]{}…-_/\\*#@")
 
 
 class MoodAnalyzer:
@@ -31,6 +60,8 @@ class MoodAnalyzer:
         # Store as sets for faster lookup.
         self.positive_words = set(w.lower() for w in positive_words)
         self.negative_words = set(w.lower() for w in negative_words)
+        self._positive_hits: List[str] = []
+        self._negative_hits: List[str] = []
 
     # ---------------------------------------------------------------------
     # Preprocessing
@@ -40,21 +71,19 @@ class MoodAnalyzer:
         """
         Convert raw text into a list of tokens the model can work with.
 
-        TODO: Improve this method.
-
-        Right now, it does the minimum:
-          - Strips leading and trailing whitespace
-          - Converts everything to lowercase
-          - Splits on spaces
-
-        Ideas to improve:
-          - Remove punctuation
-          - Handle simple emojis separately (":)", ":-(", "🥲", "😂")
-          - Normalize repeated characters ("soooo" -> "soo")
+        Steps:
+          - Strip leading and trailing whitespace
+          - Lowercase the whole string
+          - Split into words, simple emoticons, and single emoji characters
+          - Drop commas and other punctuation stuck to a word
         """
         cleaned = text.strip().lower()
-        tokens = cleaned.split()
-
+        tokens: List[str] = []
+        for match in _TOKEN_RE.finditer(cleaned):
+            token = match.group(0)
+            if token in _SKIP_TOKENS:
+                continue
+            tokens.append(token)
         return tokens
 
     # ---------------------------------------------------------------------
@@ -68,22 +97,44 @@ class MoodAnalyzer:
         Positive words increase the score.
         Negative words decrease the score.
 
-        TODO: You must choose AT LEAST ONE modeling improvement to implement.
-        For example:
-          - Handle simple negation such as "not happy" or "not bad"
-          - Count how many times each word appears instead of just presence
-          - Give some words higher weights than others (for example "hate" < "annoyed")
-          - Treat emojis or slang (":)", "lol", "💀") as strong signals
+        Enhancement: a negation word flips the next mood word.
+        "not happy" subtracts a point. "not bad" adds a point.
+        A short list of emojis also adds or subtracts one point.
+        Each match is counted every time it appears.
         """
-        # TODO: Implement this method.
-        #   1. Call self.preprocess(text) to get tokens.
-        #   2. Loop over the tokens.
-        #   3. Increase the score for positive words, decrease for negative words.
-        #   4. Return the total score.
-        #
-        # Hint: if you implement negation, you may want to look at pairs of tokens,
-        # like ("not", "happy") or ("never", "fun").
-        pass
+        tokens = self.preprocess(text)
+        score = 0
+        positive_hits: List[str] = []
+        negative_hits: List[str] = []
+
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            negated = token in NEGATION_WORDS or token.endswith("n't")
+            if negated and i + 1 < len(tokens):
+                nxt = tokens[i + 1]
+                if nxt in self.positive_words:
+                    score -= 1
+                    negative_hits.append(f"not {nxt}")
+                    i += 2
+                    continue
+                if nxt in self.negative_words:
+                    score += 1
+                    positive_hits.append(f"not {nxt}")
+                    i += 2
+                    continue
+
+            if token in self.positive_words or token in POSITIVE_EMOJI:
+                score += 1
+                positive_hits.append(token)
+            elif token in self.negative_words or token in NEGATIVE_EMOJI:
+                score -= 1
+                negative_hits.append(token)
+            i += 1
+
+        self._positive_hits = positive_hits
+        self._negative_hits = negative_hits
+        return score
 
     # ---------------------------------------------------------------------
     # Label prediction
@@ -93,24 +144,24 @@ class MoodAnalyzer:
         """
         Turn the numeric score for a piece of text into a mood label.
 
-        The default mapping is:
-          - score > 0  -> "positive"
-          - score < 0  -> "negative"
+        Mapping:
+          - positive hits and negative hits together, and score between -1 and 1 -> "mixed"
+          - score > 0 -> "positive"
+          - score < 0 -> "negative"
           - score == 0 -> "neutral"
 
-        TODO: You can adjust this mapping if it makes sense for your model.
-        For example:
-          - Use different thresholds (for example score >= 2 to be "positive")
-          - Add a "mixed" label for scores close to zero
-        Just remember that whatever labels you return should match the labels
-        you use in TRUE_LABELS in dataset.py if you care about accuracy.
+        A score of 2 or more stays positive even if one negative word showed up,
+        and a score of -2 or less stays negative. The two sides have to nearly
+        cancel before the label is mixed.
         """
-        # TODO: Implement this method.
-        #   1. Call self.score_text(text) to get the numeric score.
-        #   2. Return "positive" if the score is above 0.
-        #   3. Return "negative" if the score is below 0.
-        #   4. Return "neutral" otherwise.
-        pass
+        score = self.score_text(text)
+        if self._positive_hits and self._negative_hits and abs(score) <= 1:
+            return "mixed"
+        if score > 0:
+            return "positive"
+        if score < 0:
+            return "negative"
+        return "neutral"
 
     # ---------------------------------------------------------------------
     # Explanations (optional but recommended)
@@ -120,34 +171,11 @@ class MoodAnalyzer:
         """
         Return a short string explaining WHY the model chose its label.
 
-        TODO:
-          - Look at the tokens and identify which ones counted as positive
-            and which ones counted as negative.
-          - Show the final score.
-          - Return a short human readable explanation.
-
-        Example explanation (your exact wording can be different):
-          'Score = 2 (positive words: ["love", "great"]; negative words: [])'
-
-        The current implementation is a placeholder so the code runs even
-        before you implement it.
+        Uses the same hits as score_text, including negation flips.
         """
-        tokens = self.preprocess(text)
-
-        positive_hits: List[str] = []
-        negative_hits: List[str] = []
-        score = 0
-
-        for token in tokens:
-            if token in self.positive_words:
-                positive_hits.append(token)
-                score += 1
-            if token in self.negative_words:
-                negative_hits.append(token)
-                score -= 1
-
+        score = self.score_text(text)
         return (
             f"Score = {score} "
-            f"(positive: {positive_hits or '[]'}, "
-            f"negative: {negative_hits or '[]'})"
+            f"(positive: {self._positive_hits or '[]'}, "
+            f"negative: {self._negative_hits or '[]'})"
         )
