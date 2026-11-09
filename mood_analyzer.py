@@ -145,7 +145,7 @@ class MoodAnalyzer:
         Turn the numeric score for a piece of text into a mood label.
 
         Mapping:
-          - both positive and negative hits, and score between -1 and 1 -> "mixed"
+          - positive hits and negative hits together, and score between -1 and 1 -> "mixed"
           - score > 0 -> "positive"
           - score < 0 -> "negative"
           - score == 0 -> "neutral"
